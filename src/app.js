@@ -601,7 +601,8 @@ function viewDay(ds) {
     return h + '</div>';
   }
   const when = ds === now ? '<span class="flag flag-ok">ON DUTY NOW</span>' : ds === t ? '<span class="flag flag-mute">STARTS ' + S.cfg.start + ' TODAY</span>' : '';
-  h += '<div class="spread"><div class="row"><span class="flag flag-mute">' + esc(us().toUpperCase()) + '</span>' + when + (day && day.lock ? '<span class="flag flag-mute">LOCKED</span>' : '') + '</div>' + nowLink + '</div>';
+  h += '<div class="spread dayflags"><div class="row"><span class="flag flag-mute">' + esc(us().toUpperCase()) + '</span>' + when + (day && day.lock ? '<span class="flag flag-mute">LOCKED</span>' : '') + nowLink + '</div>' +
+    (day ? '<button class="btn btn-sm btn-primary" data-act="copy-day" data-ds="' + ds + '">' + icon.copy + 'Copy for WhatsApp</button>' : '') + '</div>';
   if (A.ui.awayMsg) h += msgBanner();
   if (!day) {
     h += '<div class="card pad section"><p class="eyebrow">Watch bill</p><p style="margin:0">This duty day isn’t planned yet.</p>' +
@@ -616,6 +617,7 @@ function viewDay(ds) {
   const badIds = new Set(issues.filter(i => i.id).map(i => i.id));
   if (issues.length) h += '<ul class="issues">' + issues.map(i => '<li' + (i.k === 'capR' ? ' class="w"' : '') + '>' + esc(i.t) + '</li>').join('') + (fwdFix ? '<li class="fix">' + fwdFix + '</li>' : '') + '</ul>';
   h += '<section class="card bill" aria-label="Watch bill"><div class="bill-top"><p class="eyebrow">Watch bill</p><p class="eyebrow">' + (A.ro ? '' : 'Tap a name to change it') + '</p></div>';
+  let nLate = 0, nEarly = 0;
   day.w.forEach((w, wi) => {
     const g = E.geom(w, S.cfg), bk = backupOf(day, wi);
     const tags = w.p.map((id, si) => {
@@ -628,36 +630,42 @@ function viewDay(ds) {
       return A.ro ? '<span class="' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + inner + '</span>'
         : '<button class="' + cls + '" data-act="pick" data-ds="' + ds + '" data-wi="' + wi + '" data-si="' + si + '" aria-label="Change ' + esc(cs(id)) + ' on watch ' + (wi + 1) + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + inner + '</button>';
     }).join('');
-    const chips = kind => w.p.map((id, si) => {
-      if (!id) return '';
-      const sg = E.seatGeom(w, si, S.cfg), on = kind === 'late' ? sg.lateIn : sg.earlyOut, t = kind === 'late' ? sIn(w, si) : sOut(w, si);
-      const lab = esc(cs(id)) + ' ' + t;
-      return A.ro ? '<span class="lv' + (on ? ' early' : '') + '">' + lab + '</span>'
-        : '<button class="lv' + (on ? ' early' : '') + '" data-act="perk" data-kind="' + kind + '" data-ds="' + ds + '" data-wi="' + wi + '" data-si="' + si + '" aria-label="' + esc(cs(id)) + (kind === 'late' ? ' reports at ' : ' leaves at ') + t + '. Tap to change.">' + lab + '</button>';
-    }).join(' ');
-    const inHtml = g.late ? chips('late') : '<b class="mono">' + S.cfg.start + '</b>';
-    const outHtml = g.early ? chips('early') : '<b class="mono">' + S.cfg.start + '</b>';
+    // only pilots who come in late or go home early get a time chip; everyone else uses the shift change
+    const chip = (id, si, kind, tm) => A.ro ? '<span class="lv early">' + esc(cs(id)) + ' ' + tm + '</span>'
+      : '<button class="lv early" data-act="perk" data-kind="' + kind + '" data-ds="' + ds + '" data-wi="' + wi + '" data-si="' + si + '" aria-label="' + esc(cs(id)) + (kind === 'late' ? ' enters late at ' : ' leaves at ') + tm + '. Tap to put them back on ' + S.cfg.start + '.">' + esc(cs(id)) + ' ' + tm + '</button>';
+    const ins = [], outs = [];
+    w.p.forEach((id, si) => {
+      if (!id) return;
+      const sg = E.seatGeom(w, si, S.cfg);
+      if (sg.lateIn) { ins.push(chip(id, si, 'late', sIn(w, si))); nLate++; }
+      if (sg.earlyOut) { outs.push(chip(id, si, 'early', sOut(w, si))); nEarly++; }
+    });
+    const meta = (ins.length ? '<span>In ' + ins.join(' ') + '</span>' : '') + (outs.length ? '<span>Out ' + outs.join(' ') + '</span>' : '') +
+      (bk >= 0 ? '<span>Back-up <b>' + day.w[bk].p.map(id => id ? esc(cs(id)) : '—').join(' / ') + '</b></span>' : '');
     h += '<div class="bill-row' + (g.night ? ' is-night' : '') + '"><span class="bill-n disp">' + (wi + 1) + '</span><div class="bill-pair">' + tags + '</div>' +
       '<div class="bill-time"><b>' + w.s + '–' + w.e + '</b><span>' + fmtH(g.h) + ' h' + (g.night ? ' · night' : '') + '</span></div>' +
-      '<div class="bill-meta"><span>In ' + inHtml + '</span><span>Out ' + outHtml + '</span>' + (bk >= 0 ? '<span>Back-up <b>' + day.w[bk].p.map(id => id ? esc(cs(id)) : '—').join(' / ') + '</b></span>' : '') + '</div></div>';
+      (meta ? '<div class="bill-meta">' + meta + '</div>' : '') + '</div>';
   });
-  h += '</section>';
-  h += '<div class="callout"><span>' + S.cfg.minAt + ' pilots have to be at the alert building all the time</span><span>Primary back-up: “next cappers”</span></div>';
-  h += '<section class="card pad section times" aria-label="Report times, leave times and rest days">' + timeGroups(ds, day).map(g => {
-    if (g.rest) return '<div class="tg tg-rest"><p class="eyebrow">' + esc(g.label) + ' · ' + g.ids.length + '</p><div class="tags">' + restChips(g.ds, g.ids) +
-      (A.ro ? '' : '<button class="btn btn-sm" data-act="rest-open" data-ds="' + g.ds + '">Edit</button>') + '</div>' +
-      (g.unplanned ? '<p class="note">' + esc(fmtDay(g.ds)) + ' isn’t planned yet' + (g.ids.length ? '; these are kept off it' : '') + '.</p>' : g.again.length ? '<p class="note">On alert again, back-to-back: ' + esc(g.again.map(cs).join(', ')) + '</p>' : '') + '</div>';
-    return '<div class="tg"><p class="eyebrow">' + esc(g.label) + '</p><div class="tags">' + (g.ids.length ? g.ids.map(id => '<span class="tag tag-sm off">' + esc(cs(id)) + '</span>').join('') : '<span class="note">Nobody</span>') + '</div></div>';
-  }).join('') + '</section>';
-  h += '<figure class="card pad strip"><figcaption class="eyebrow">Shift timeline · ' + S.cfg.start + ' → ' + S.cfg.start + '</figcaption>' + strip(day.w, true) + '</figure>';
+  const capL = E.capLate(S.cfg), capE = E.capEarly(S.cfg), anyLate = day.w.some(w => E.geom(w, S.cfg).late), anyEarly = day.w.some(w => E.geom(w, S.cfg).early);
+  h += '<div class="bill-foot">' + (anyLate ? '<span>Late in <b>' + nLate + '</b> of ' + capL + ' · ' + E.lateT(S.cfg) + '</span>' : '') +
+    (anyEarly ? '<span>Leave early <b>' + nEarly + '</b> of ' + capE + ' · ' + E.earlyT(S.cfg) + '</span>' : '') +
+    '<span>Everyone else in and out at ' + S.cfg.start + '</span></div></section>';
+  // off duty: resting today, off the next duty day, away
   const resting = restingOn(ds).map(p => p.id);
   const away = activePilots().map(p => ({ p, a: E.awayOn(S, p.id, ds) })).filter(x => x.a);
-  h += '<div class="card pad section"><div class="section" style="gap:8px"><p class="eyebrow">Rest day today · not on alert · ' + resting.length + '</p><div class="tags">' + restChips(ds, resting) +
-    (A.ro ? '' : '<button class="btn btn-sm" data-act="rest-open" data-ds="' + ds + '">Edit</button>') + '</div></div>' +
-    (away.length ? '<div class="section" style="gap:8px"><p class="eyebrow">Away · ' + away.length + '</p><div class="tags">' + away.map(x => '<span class="tag tag-sm away" title="' + esc(x.a.type) + '">' + esc(x.p.cs) + ' · ' + awayCode(x.a.type) + '</span>').join('') + '</div></div>' : '') + '</div>';
-  h += '<div class="row"><button class="btn" data-act="copy-day" data-ds="' + ds + '">' + icon.copy + 'Copy for WhatsApp</button>' +
-    (A.ro ? '' : (day.lock ? '<button class="btn" data-act="unlock" data-ds="' + ds + '">Unlock day</button>' : '<button class="btn" data-act="lock" data-ds="' + ds + '">' + icon.lock + 'Lock day</button>') +
-      '<button class="btn btn-quiet" data-act="replan-day" data-ds="' + ds + '">Re-plan this day</button>') + '</div>';
+  const ng = timeGroups(ds, day).find(g => g.rest);
+  const edit = d => A.ro ? '' : '<button class="btn btn-sm" data-act="rest-open" data-ds="' + d + '">Edit</button>';
+  h += '<section class="card pad off" aria-label="Off duty">' +
+    '<div class="off-row"><p class="eyebrow">Resting today · not on alert · ' + resting.length + '</p><div class="tags">' + restChips(ds, resting) + edit(ds) + '</div></div>' +
+    (ng ? '<div class="off-row"><p class="eyebrow">Off the next duty day · ' + DOW[E.dow(ng.ds)] + ' ' + esc(fmtShort(ng.ds)) + ' · ' + ng.ids.length + '</p><div class="tags">' + restChips(ng.ds, ng.ids) + edit(ng.ds) + '</div>' +
+      (ng.unplanned ? '<p class="note">' + esc(fmtDay(ng.ds)) + ' isn’t planned yet' + (ng.ids.length ? '; these are kept off it' : '') + '.</p>' : ng.again.length ? '<p class="note">On alert again, back-to-back: ' + esc(ng.again.map(cs).join(', ')) + '</p>' : '') + '</div>' : '') +
+    (away.length ? '<div class="off-row"><p class="eyebrow">Away · ' + away.length + '</p><div class="tags">' + away.map(x => '<span class="tag tag-sm away" title="' + esc(x.a.type) + '">' + esc(x.p.cs) + ' · ' + awayCode(x.a.type) + '</span>').join('') + '</div></div>' : '') +
+    '</section>';
+  // the timeline, with the standing orders under it
+  h += '<figure class="card pad strip"><figcaption class="eyebrow">Shift timeline · ' + S.cfg.start + ' → ' + S.cfg.start + '</figcaption>' + strip(day.w, true) +
+    '<p class="callout callout-sm"><span>' + S.cfg.minAt + ' pilots at the alert building all the time</span><span>Primary back-up: “next cappers”</span></p></figure>';
+  if (!A.ro) h += '<div class="row">' + (day.lock ? '<button class="btn" data-act="unlock" data-ds="' + ds + '">Unlock day</button>' : '<button class="btn" data-act="lock" data-ds="' + ds + '">' + icon.lock + 'Lock day</button>') +
+    '<button class="btn btn-quiet" data-act="replan-day" data-ds="' + ds + '">Re-plan this day</button></div>';
   if (!A.ro) h += '<p class="note">Locked days keep their crew when you generate. Changing a name or a time locks the day. Swapped with ' + esc(them()) + '? <button class="btn btn-sm btn-quiet" data-act="swap-out" data-ds="' + ds + '">Give this day to ' + esc(them()) + '</button></p>';
   return h + '</div>';
 }
@@ -912,7 +920,11 @@ function sheet() {
     const mate = w.p[1 - s.si];
     head = s.rest && cur ? '<h2 class="disp">' + esc(cs(cur)) + ' rests · who takes watch ' + (s.wi + 1) + '?</h2><p>' + esc(fmtDay(s.ds)) + ' · ' + w.s + '–' + w.e + (mate ? ' · partner ' + esc(cs(mate)) + ((E.pilot(S, mate) || {}).lead ? ' (lead)' : '') : '') + '</p>'
       : '<h2 class="disp">Watch ' + (s.wi + 1) + ' · ' + w.s + '–' + w.e + '</h2><p>' + esc(fmtDay(s.ds)) + ' · ' + (cur ? 'replacing ' + esc(cs(cur)) : 'empty seat') + (mate ? ' · partner ' + esc(cs(mate)) + ((E.pilot(S, mate) || {}).lead ? ' (lead)' : '') : '') + '</p>';
-    body = '<p class="eyebrow bs-group">Resting today · best first</p>' +
+    const g0 = E.geom(w, S.cfg), sg0 = cur ? E.seatGeom(w, s.si, S.cfg) : null;
+    const perkBtn = (kind, on, label) => '<button class="btn btn-sm' + (on ? ' is-on' : '') + '" data-act="perk" data-kind="' + kind + '" data-ds="' + s.ds + '" data-wi="' + s.wi + '" data-si="' + s.si + '" aria-pressed="' + on + '">' + label + (on ? ' ✓' : '') + '</button>';
+    const perks = cur && !s.rest && (g0.late || g0.early) ? '<p class="eyebrow bs-group">' + esc(cs(cur)) + '’s times · normally ' + S.cfg.start + '</p><div class="row">' +
+      (g0.late ? perkBtn('late', sg0.lateIn, 'Enters late at ' + E.lateT(S.cfg)) : '') + (g0.early ? perkBtn('early', sg0.earlyOut, 'Leaves at ' + E.earlyT(S.cfg)) : '') + '</div>' : '';
+    body = perks + '<p class="eyebrow bs-group">Resting today · best first</p>' +
       (allLong ? '<p class="note">Everyone resting today worked the last duty day and is on the next one, so whoever you pick works three in a row' + (nxOpen ? ' unless you re-plan from ' + esc(fmtDay(nx)) : '') + '.</p>' : '') +
       (free.length ? free.map(x => x.html).join('') : '<p class="note">Nobody else is free that day.</p>') +
       (kept.length ? '<p class="eyebrow bs-group">Kept off alert today</p>' + kept.join('') : '') +

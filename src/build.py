@@ -5,7 +5,7 @@
 """
 import json, pathlib, re, sys
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 SRC = pathlib.Path(__file__).resolve().parent
 ROOT = SRC.parent
 
