@@ -1,7 +1,7 @@
 /* Alert Duty Roster offline support.
    The page is fetched fresh whenever the phone is online (falling back to the saved copy offline),
    so updates show up on the next launch. Icons and fonts come from the cache. */
-const VERSION = 'dr-1.1.0';
+const VERSION = 'dr-1.2.0';
 const FONTS = 'dr-fonts';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png', './icons/favicon-32.png'];
 const OFFLINE = () => new Response('You’re offline and the app isn’t saved on this phone yet. Connect once, then it works offline.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });

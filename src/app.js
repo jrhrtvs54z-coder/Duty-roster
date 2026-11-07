@@ -221,16 +221,36 @@ function go(h) { if (location.hash.slice(1) === h) render(); else location.hash 
 
 // ---------- actions ----------
 function remember() { A.undo = { months: clone(A.S.months), cfg: clone(A.S.cfg) }; }
-function doGenerate(from, to, msg) {
+function doGenerate(from, to, msg, keepUndo) {
   if (A.ro) return;
-  remember();
+  if (!keepUndo) remember();
   const n = E.generate(A.S, from, to);
   touchRange(from, E.addDays(to, 2));
+  if (typeof msg === 'function') msg = msg(n);
   toast(msg || ('Planned ' + n + ' duty day' + (n === 1 ? '' : 's') + ' · ' + fmtShort(from) + (to !== from ? ' – ' + fmtShort(to) : '')), true);
   const nextYm = E.addMonths(to.slice(0, 7), 1);
   if (to === monthEnd(to) && A.S.months[nextYm] && Object.keys(A.S.months[nextYm].days || {}).length) {
     setTimeout(() => toast(monthName(nextYm) + ' was planned before this change. Generate it again to keep the rotation even.'), 3500);
   }
+  render();
+}
+// Start a month over (every day from a date, locked ones too) or delete its whole plan.
+function resetMonth(ym, how) {
+  if (A.ro) return;
+  const S = A.S, first = ym + '-01', last = monthEnd(first);
+  A.ui.sheet = null;
+  if (how === 'replan') {
+    const inp = $('#reset-from'), from = inp && inp.value && inp.value.slice(0, 7) === ym ? inp.value : first;
+    remember();
+    for (let ds = from; ds <= last; ds = E.addDays(ds, 1)) { const day = E.getDay(S, ds); if (day) day.lock = false; }
+    A.ui.genFrom = from;
+    doGenerate(from, last, n => 'Started over: ' + n + ' duty day' + (n === 1 ? '' : 's') + ' planned · ' + fmtShort(from) + ' – ' + fmtShort(last), true);
+    return;
+  }
+  remember();
+  S.months[ym] = { days: {}, rest: {}, restFix: {} };
+  Store.touch('m:' + ym);
+  toast(monthName(ym) + ' deleted. It shows as not planned until you generate it.', true);
   render();
 }
 function undo() {
@@ -749,6 +769,7 @@ function viewMonth(ym) {
   if (A.ui.awayMsg) h += msgBanner();
   if (!A.ro) h += '<div class="card pad gen"><div class="field"><label for="gen-from">Generate from</label><input id="gen-from" class="inp" type="date" min="' + first + '" max="' + last + '" value="' + genDefault + '"></div>' +
     '<button class="btn btn-primary" data-act="gen" data-ym="' + ym + '">Generate to ' + fmtShort(last) + '</button><button class="btn" data-act="copy-month" data-ym="' + ym + '">' + icon.copy + 'Copy for Excel</button>' +
+    (S.months[ym] && monthBody(ym) ? '<button class="btn btn-quiet btn-danger" data-act="reset-open" data-ym="' + ym + '">Reset or delete</button>' : '') +
     '<p class="note" style="flex-basis:100%">Plans ' + esc(us()) + '’s duty days only (every ' + (E.cycleOf(S) === 2 ? 'other day' : E.cycleOf(S) + ' days') + '). Locked days and days before the start date stay as they are.</p></div>';
   if (!days.length) return h + '<p class="note">No ' + esc(us()) + ' duty days this month. Check the duty days in Setup.</p>';
   if (!A.ro) h += '<div class="spread"><p class="eyebrow">Pilots in rank order</p><button class="btn btn-sm" data-act="ord-open">' + icon.grip + 'Reorder</button></div>';
@@ -978,6 +999,20 @@ function sheet() {
       '<button class="btn btn-sm ord-b" id="od-' + p.id + '" data-act="ord-dn" data-pid="' + p.id + '" aria-label="Move ' + esc(p.cs) + ' down"' + (i < ps.length - 1 ? '' : ' disabled') + '>' + icon.down + '</button>' +
       '<span class="ord-h" title="Drag to move">' + icon.grip + '</span></li>').join('') + '</ol>';
     foot = '<button class="btn btn-primary" data-act="close" data-autofocus>Done</button>';
+  } else if (s.type === 'reset') {
+    const S = A.S, ym = s.ym, first = ym + '-01', last = monthEnd(first), m = S.months[ym] || {};
+    const dd = Object.keys(m.days || {}).filter(d => d.slice(0, 7) === ym && isDuty(d));
+    const locked = dd.filter(d => m.days[d].lock).length;
+    const rests = Object.keys(m.rest || {}).filter(d => m.restFix && m.restFix[d] && (m.rest[d] || []).length).length;
+    const from = s.from && s.from.slice(0, 7) === ym ? s.from : first;
+    const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+    head = '<h2 class="disp">Reset ' + esc(monthName(ym)) + '</h2><p>' + plural(dd.length, 'planned day') + (locked ? ', ' + locked + ' locked' : '') + (rests ? ', planned rests on ' + plural(rests, 'day') : '') + '. You can undo right after.</p>';
+    body = '<div class="card pad section"><p class="eyebrow">Start over</p><p style="margin:0">Plans every duty day again from the date you pick to ' + esc(fmtShort(last)) + ', locked days included. Planned rests, leave and courses stay.</p>' +
+      '<div class="field"><label for="reset-from">From</label><input id="reset-from" class="inp" type="date" min="' + first + '" max="' + last + '" value="' + from + '"></div>' +
+      '<div><button class="btn btn-primary" data-act="reset-replan" data-ym="' + ym + '">Start over</button></div></div>' +
+      '<div class="card pad section"><p class="eyebrow">Delete the month</p><p style="margin:0">Removes every watch bill, lock and planned rest in ' + esc(monthName(ym)) + '. The month shows as not planned until you generate it.</p>' +
+      '<div><button class="btn btn-danger" data-act="reset-delete" data-ym="' + ym + '">Delete ' + esc(monthName(ym)) + '</button></div></div>';
+    foot = '<button class="btn" data-act="close" data-autofocus>Cancel</button>';
   } else if (s.type === 'confirm') {
     head = '<h2 class="disp">' + esc(s.title) + '</h2><p>' + esc(s.text) + '</p>';
     foot = '<button class="btn ' + (s.danger ? 'btn-danger' : 'btn-primary') + '" data-act="confirm-yes">' + esc(s.yes) + '</button><button class="btn" data-act="close" data-autofocus>Cancel</button>';
@@ -1002,6 +1037,9 @@ document.addEventListener('click', e => {
     case 'perk': togglePerk(d.ds, +d.wi, +d.si, d.kind); break;
     case 'rest-open': openSheet({ type: 'rest', ds: d.ds }); break;
     case 'ord-open': openSheet({ type: 'order' }); break;
+    case 'reset-open': { const inp = $('#gen-from'); openSheet({ type: 'reset', ym: d.ym, from: inp && inp.value ? inp.value : null }); break; }
+    case 'reset-replan': resetMonth(d.ym, 'replan'); break;
+    case 'reset-delete': resetMonth(d.ym, 'delete'); break;
     case 'ord-up': case 'ord-dn': { const i = activePilots().findIndex(p => p.id === d.pid); movePilot(d.pid, i + (act === 'ord-up' ? -1 : 1)); break; }
     case 'rest-keep': { const ds = A.ui.sheet.ds; if (E.restOn(S, d.pid, ds)) release(ds, d.pid); else keepOff(ds, d.pid); break; }
     case 'rest-next': keepNext(A.ui.sheet.ds, d.pid); break;
